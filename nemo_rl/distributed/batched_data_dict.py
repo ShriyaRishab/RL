@@ -535,55 +535,39 @@ class BatchedDataDict(UserDict, Generic[DictT]):
         else:
             data = self.data
 
-        aggregated_shards = [SlicedDataDict() for _ in range(shards)]
-
-        # Group data by shard position across all chunks
+        # Pre-compute all indices for each shard to avoid incremental concatenation
+        shard_indices: list[list[torch.Tensor]] = [[] for _ in range(shards)]
         for shard_idx in range(shards):
             for chunk_idx in range(num_chunks):
-                # Calculate indices for this particular sub-shard within the chunk
                 chunk_start = chunk_idx * batch_size
                 shard_start = chunk_start + shard_idx * shard_size
                 shard_end = chunk_start + (shard_idx + 1) * shard_size
                 if allow_uneven_shards:
-                    # Cap the end index at the total batch size for the last shard
-                    # or if shard_end calculation goes beyond total_batch_size
                     shard_start = min(shard_start, total_batch_size)
                     shard_end = min(shard_end, total_batch_size)
-                indices = torch.arange(shard_start, shard_end)
+                if shard_start < shard_end:
+                    shard_indices[shard_idx].append(
+                        torch.arange(shard_start, shard_end)
+                    )
 
-                for k in data:
-                    if k not in aggregated_shards[shard_idx]:
-                        # First time seeing this key for this shard, initialize it
-                        if torch.is_tensor(data[k]):
-                            aggregated_shards[shard_idx][k] = data[k][indices].clone()
-                        elif isinstance(data[k], PackedTensor):
-                            aggregated_shards[shard_idx][k] = data[k].slice(
-                                indices.tolist()
-                            )
-                        else:
-                            aggregated_shards[shard_idx][k] = [
-                                data[k][i] for i in indices
-                            ]
-                    else:
-                        # Append to existing data - concatenate tensors or extend lists
-                        if torch.is_tensor(data[k]):
-                            aggregated_shards[shard_idx][k] = torch.cat(
-                                [
-                                    aggregated_shards[shard_idx][k],
-                                    data[k][indices].clone(),
-                                ]
-                            )
-                        elif isinstance(data[k], PackedTensor):
-                            aggregated_shards[shard_idx][k] = PackedTensor.concat(
-                                [
-                                    aggregated_shards[shard_idx][k],
-                                    data[k].slice(indices.tolist()),
-                                ]
-                            )
-                        else:
-                            aggregated_shards[shard_idx][k].extend(
-                                [data[k][i] for i in indices]
-                            )
+        aggregated_shards = [SlicedDataDict() for _ in range(shards)]
+
+        # Build each shard with a single concatenation per key
+        for shard_idx in range(shards):
+            if not shard_indices[shard_idx]:
+                continue
+            all_indices = torch.cat(shard_indices[shard_idx])
+            for k in data:
+                if torch.is_tensor(data[k]):
+                    aggregated_shards[shard_idx][k] = data[k][all_indices].clone()
+                elif isinstance(data[k], PackedTensor):
+                    aggregated_shards[shard_idx][k] = data[k].slice(
+                        all_indices.tolist()
+                    )
+                else:
+                    aggregated_shards[shard_idx][k] = [
+                        data[k][i] for i in all_indices.tolist()
+                    ]
 
         # map inputs to microbatches such that the total number tokens in
         # a microbatch is as close to (including padding tokens) 'max_tokens_per_microbatch'
