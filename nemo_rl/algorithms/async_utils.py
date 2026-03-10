@@ -390,21 +390,27 @@ class AsyncTrajectoryCollector:
         print("Collection thread started, start_collection returning")
 
     def _collection_loop(self):
-        """Run the collection loop in background thread."""
+        """Run the collection loop in background thread.
+
+        Continuously iterates over the dataloader, restarting from the beginning
+        when all data has been consumed (multi-epoch). The loop only stops when
+        self.running is set to False.
+        """
         try:
-            for batch in self.dataloader:
-                if not self.running:
-                    break
+            while self.running:
+                for batch in self.dataloader:
+                    if not self.running:
+                        break
 
-                # Check if manually paused and wait
-                if not self._manual_pause_cleared.is_set() and self.running:
-                    self._manual_pause_cleared.wait()
+                    # Check if manually paused and wait
+                    if not self._manual_pause_cleared.is_set() and self.running:
+                        self._manual_pause_cleared.wait()
 
-                # Check if refit is in progress and wait
-                if not self._refit_pause_cleared.is_set() and self.running:
-                    print("⏸️ Pausing collection for refit...")
-                    self._refit_pause_cleared.wait()
-                    print("▶️ Refit completed, resuming collection")
+                    # Check if refit is in progress and wait
+                    if not self._refit_pause_cleared.is_set() and self.running:
+                        print("⏸️ Pausing collection for refit...")
+                        self._refit_pause_cleared.wait()
+                        print("▶️ Refit completed, resuming collection")
 
                 # Check if generation limits require pausing collection
                 if self._should_pause_for_generation_limits() and self.running:
