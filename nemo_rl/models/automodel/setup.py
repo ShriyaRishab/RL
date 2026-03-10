@@ -490,8 +490,8 @@ def setup_model_and_optimizer(
             ),
             cp_axis_name="cp",
             tp_axis_name="tp",
-            ep_axis_name="ep",
-            ep_shard_axis_names=("ep_shard",),
+            ep_axis_name="ep" if moe_mesh is not None else None,
+            ep_shard_axis_names=("ep_shard",) if moe_mesh is not None else None,
         )
     else:
         model = distributed_manager.parallelize(model)
