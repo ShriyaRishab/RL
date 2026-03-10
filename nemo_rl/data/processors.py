@@ -451,6 +451,10 @@ def math_hf_data_processor(
     tokenizer: TokenizerType,
     max_seq_length: int,
     idx: int,
+    add_bos: bool = False,
+    add_eos: bool = True,
+    add_generation_prompt: bool = True,
+    **kwargs,
 ) -> DatumSpec:
     """Process a datum dictionary (directly loaded from data/hf_datasets/openmathinstruct2.py) into a DatumSpec for the Reward Model Environment."""
     user_message = datum_dict["messages"]
@@ -461,24 +465,45 @@ def math_hf_data_processor(
     formatted_content = (
         task_data_spec.prompt.format(problem) if task_data_spec.prompt else problem
     )
-    user_message = {
+
+    # Handle system prompt if provided (issue #2060)
+    chat_messages: list[dict[str, str]] = []
+    if task_data_spec.system_prompt:
+        sys_prompt: dict[str, str | torch.Tensor] = {
+            "role": "system",
+            "content": task_data_spec.system_prompt,
+        }
+        sys_text = tokenizer.apply_chat_template(
+            [cast(dict[str, str], sys_prompt)],
+            tokenize=False,
+            add_generation_prompt=False,
+            add_special_tokens=False,
+        )
+        sys_prompt["token_ids"] = tokenizer(
+            sys_text, return_tensors="pt", add_special_tokens=False
+        )["input_ids"][0]
+        message_log.append(sys_prompt)
+        chat_messages.append({"role": "system", "content": task_data_spec.system_prompt})
+
+    user_msg_dict = {
         "role": "user",
         "content": formatted_content,
     }
+    chat_messages.append({"role": "user", "content": formatted_content})
     message: list[str] = tokenizer.apply_chat_template(  # type: ignore
-        [user_message],
+        chat_messages,
         tokenize=False,
-        add_generation_prompt=True,
-        add_special_tokens=False,
+        add_generation_prompt=add_generation_prompt,
+        add_special_tokens=add_bos,
     )
 
-    user_message["token_ids"] = tokenizer(
+    user_msg_dict["token_ids"] = tokenizer(
         message,
         return_tensors="pt",
         add_special_tokens=False,
     )["input_ids"][0]
-    user_message["content"] = message
-    message_log.append(user_message)
+    user_msg_dict["content"] = message
+    message_log.append(user_msg_dict)
 
     length = sum(len(m["token_ids"]) for m in message_log)
 
