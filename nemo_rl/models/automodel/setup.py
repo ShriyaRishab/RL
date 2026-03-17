@@ -492,6 +492,7 @@ def setup_model_and_optimizer(
             tp_axis_name="tp",
             ep_axis_name="ep",
             ep_shard_axis_names=("ep_shard",),
+            offload_policy=CPUOffloadPolicy(pin_memory=False) if cpu_offload else None,
         )
     else:
         model = distributed_manager.parallelize(model)
