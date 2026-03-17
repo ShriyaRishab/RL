@@ -501,13 +501,19 @@ class BaseVllmGenerationWorker:
             max_new_tokens if max_new_tokens is not None else self.cfg["max_new_tokens"]
         )
 
+        # Convert stop_token_ids to native list if it's an OmegaConf ListConfig
+        # vLLM strictly requires a Python list type
+        stop_token_ids = self.cfg["stop_token_ids"]
+        if stop_token_ids is not None and not isinstance(stop_token_ids, list):
+            stop_token_ids = list(stop_token_ids)
+
         return self.SamplingParams(
             temperature=temperature,
             top_p=self.cfg["top_p"],
             top_k=top_k_val,
             max_tokens=max_tokens,
             logprobs=0,
-            stop_token_ids=self.cfg["stop_token_ids"],
+            stop_token_ids=stop_token_ids,
             stop=stop_strings,
             include_stop_str_in_output=True,
         )
@@ -759,12 +765,18 @@ class VllmGenerationWorker(BaseVllmGenerationWorker):
 
         # Read generation parameters from config
         top_k = self.cfg["top_k"] if self.cfg["top_k"] is not None else -1
+        # Convert stop_token_ids to native list if it's an OmegaConf ListConfig
+        # vLLM strictly requires a Python list type
+        greedy_stop_token_ids = self.cfg["stop_token_ids"]
+        if greedy_stop_token_ids is not None and not isinstance(greedy_stop_token_ids, list):
+            greedy_stop_token_ids = list(greedy_stop_token_ids)
+
         sampling_params = self.SamplingParams(
             temperature=self.cfg["temperature"] if not greedy else 0,
             top_p=self.cfg["top_p"],
             top_k=top_k if not greedy else 1,
             max_tokens=self.cfg["max_new_tokens"],
-            stop_token_ids=self.cfg["stop_token_ids"],
+            stop_token_ids=greedy_stop_token_ids,
             stop=stop_strings,
             include_stop_str_in_output=True,  # returning stop strings like hf
         )
