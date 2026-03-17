@@ -219,6 +219,16 @@ def process_microbatch(
     input_ids = mb.get("input_ids").cuda()
 
     if enable_seq_packing:
+        # Determine minimum sequence length: must be at least train_mb_tokens,
+        # and when sequence parallel is enabled, must be a multiple of TP size
+        # to avoid RoPE dimension mismatches after SP splits the sequence.
+        min_seq_len = cfg["sequence_packing"]["train_mb_tokens"]
+        sp_enabled = cfg.get("dtensor_cfg", {}).get("sequence_parallel", False)
+        tp_size = cfg.get("dtensor_cfg", {}).get("tensor_parallel_size", 1)
+        if sp_enabled and tp_size > 1:
+            # Ensure min_seq_len is a multiple of tp_size
+            min_seq_len = ((min_seq_len + tp_size - 1) // tp_size) * tp_size
+
         input_ids, position_ids, _ = pack_sequences(
             input_ids=input_ids,
             input_lengths=mb["input_lengths"],
@@ -227,10 +237,24 @@ def process_microbatch(
             ],  # flash attention 2 expects flattened input
             padding_value=tokenizer.eos_token_id,
             return_attention_mask=False,
-            min_seq_len=cfg["sequence_packing"][
-                "train_mb_tokens"
-            ],  # TODO: this is a WAR for sequence packing, we should fix this. Without this, backward will fail when TP is enabled.
+            min_seq_len=min_seq_len,
         )
+
+        # When sequence parallel is enabled, the packed length must be divisible
+        # by tp_size. The min_seq_len ensures the minimum is aligned, but the
+        # actual packed length can exceed it. Pad up to the next multiple of tp_size.
+        if sp_enabled and tp_size > 1:
+            packed_len = input_ids.shape[1]
+            padded_len = ((packed_len + tp_size - 1) // tp_size) * tp_size
+            if padded_len > packed_len:
+                pad_size = padded_len - packed_len
+                input_ids = torch.nn.functional.pad(
+                    input_ids, (0, pad_size), value=tokenizer.eos_token_id
+                )
+                position_ids = torch.nn.functional.pad(
+                    position_ids, (0, pad_size), value=0
+                )
+
         seq_len = input_ids.shape[1]
         attention_mask = None
         flash_attn_kwargs = get_flash_attention_kwargs(
