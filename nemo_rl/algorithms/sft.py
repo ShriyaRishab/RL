@@ -143,6 +143,15 @@ def setup(
         num_workers=data_config["num_workers"],
     )
 
+    # Validate that the dataloader has at least one batch
+    if len(train_dataloader) == 0:
+        raise ValueError(
+            f"Training dataloader is empty! This usually happens when "
+            f"train_global_batch_size ({policy_config['train_global_batch_size']}) "
+            f"is larger than the dataset size ({len(train_dataset)}). "
+            f"Please reduce the batch size or use a larger dataset."
+        )
+
     if last_checkpoint_path is not None:
         dataloader_state_dict = torch.load(
             os.path.join(last_checkpoint_path, "train_dataloader.pt")
